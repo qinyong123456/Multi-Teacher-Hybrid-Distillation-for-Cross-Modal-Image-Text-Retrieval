@@ -3,6 +3,8 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from transformers import CLIPTokenizer, CLIPTextModel
 from PIL import Image
+import math
+import torch.nn.functional as F
 try:
     from move_kd_retrieval.models.student_vit import StudentViTS
     from move_kd_retrieval.models.teachers import CLIPViTBaseTeacher, EVA02Teacher, ConvNeXtTeacher
@@ -49,6 +51,18 @@ def train(root=None, epochs=1, batch_size=32, lr=1e-4, kd_w=0.5, moe_balance_w=0
         for imgs, captions in dl:
             imgs = imgs.to(device)
             img_emb, v_tokens, routings = student(imgs)
+            tgt_len = v_tokens.shape[1]
+            tgt_hw = (int(math.sqrt(tgt_len)), int(math.sqrt(tgt_len)))
+            def resize_seq(tokens, src_hw, dst_hw):
+                B, L, C = tokens.shape
+                h, w = src_hw
+                if h*w != L:
+                    h = int(math.sqrt(L))
+                    w = h
+                x = tokens.transpose(1, 2).reshape(B, C, h, w)
+                x = F.interpolate(x, size=dst_hw, mode='bilinear', align_corners=False)
+                x = x.flatten(2).transpose(1, 2)
+                return x
             with torch.no_grad():
                 denorm = imgs.clone()
                 mean = torch.tensor([0.48145466, 0.4578275, 0.40821073], device=denorm.device).view(1,3,1,1)
@@ -58,11 +72,21 @@ def train(root=None, epochs=1, batch_size=32, lr=1e-4, kd_w=0.5, moe_balance_w=0
                 pil_batch = [Image.fromarray((denorm[i].permute(1,2,0).cpu().numpy()*255).astype('uint8')) for i in range(denorm.size(0))]
                 clip_images = clip_t.processor(images=pil_batch, return_tensors='pt')['pixel_values'].to(device)
                 clip_tokens, clip_cls, token_weight = clip_t(clip_images)
-                eva_tokens, eva_cls = eva_t(imgs)
-                conv_tokens, conv_cls = conv_t(imgs)
+                eva_tokens, eva_cls, eva_hw = eva_t(imgs)
+                conv_tokens, conv_cls, conv_hw = conv_t(imgs)
             clip_tokens_s = adapters('CLIP', clip_tokens.to(device))
             eva_tokens_s = adapters('EVA', eva_tokens.to(device))
             conv_tokens_s = adapters('ConvNeXt', conv_tokens.to(device))
+            clip_len = clip_tokens_s.shape[1]
+            if clip_len != tgt_len:
+                src_hw = (int(math.sqrt(clip_len)), int(math.sqrt(clip_len)))
+                clip_tokens_s = resize_seq(clip_tokens_s, src_hw, tgt_hw)
+                token_weight = token_weight.to(device)
+                tw_map = token_weight.reshape(token_weight.size(0), int(math.sqrt(token_weight.size(1))), int(math.sqrt(token_weight.size(1))))
+                tw_map = F.interpolate(tw_map.unsqueeze(1), size=tgt_hw, mode='nearest').squeeze(1)
+                token_weight = tw_map.flatten(1)
+            eva_tokens_s = resize_seq(eva_tokens_s, eva_hw, tgt_hw)
+            conv_tokens_s = resize_seq(conv_tokens_s, conv_hw, tgt_hw)
             kd_clip = weighted_mse(v_tokens, clip_tokens_s, token_weight)
             kd_eva = weighted_mse(v_tokens, eva_tokens_s)
             kd_conv = weighted_mse(v_tokens, conv_tokens_s)

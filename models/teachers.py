@@ -45,7 +45,7 @@ class EVA02Teacher(nn.Module):
         x = self.model.norm(x)
         cls = x[:, 0].to(images.device)
         tokens = x[:, 1:].to(images.device)
-        return tokens, cls
+        return tokens, cls, self.expected_hw
 
 class ConvNeXtTeacher(nn.Module):
     def __init__(self, name='convnext_large.fb_in1k'): 
@@ -59,4 +59,4 @@ class ConvNeXtTeacher(nn.Module):
         B, C, H, W = feats.shape
         tokens = feats.flatten(2).transpose(1, 2).to(images.device)
         cls = tokens.mean(dim=1).to(images.device)
-        return tokens, cls
+        return tokens, cls, (H, W)
