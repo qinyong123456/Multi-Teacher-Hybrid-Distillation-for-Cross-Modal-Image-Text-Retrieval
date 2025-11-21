@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from transformers import CLIPVisionModel, CLIPImageProcessor
 import timm
 
@@ -24,8 +25,15 @@ class EVA02Teacher(nn.Module):
         super().__init__()
         self.model = timm.create_model(name, pretrained=True)
         self.hidden_size = self.model.embed_dim if hasattr(self.model, 'embed_dim') else self.model.num_features
+        img_size = getattr(self.model.patch_embed, 'img_size', 448)
+        if isinstance(img_size, (tuple, list)):
+            self.expected_hw = (img_size[0], img_size[1])
+        else:
+            self.expected_hw = (img_size, img_size)
 
     def forward(self, images):
+        if images.shape[-2:] != self.expected_hw:
+            images = F.interpolate(images, size=self.expected_hw, mode='bilinear', align_corners=False)
         x = self.model.patch_embed(images)
         cls_token = self.model.cls_token.expand(x.size(0), -1, -1)
         x = torch.cat((cls_token, x), dim=1)
