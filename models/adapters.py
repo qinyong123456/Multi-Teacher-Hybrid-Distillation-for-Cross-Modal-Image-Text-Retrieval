@@ -14,4 +14,6 @@ class TeacherAdapters(nn.Module):
         self.adapters[name] = nn.Sequential(nn.Linear(in_dim, mid), nn.GELU(), nn.Linear(mid, self.student_hidden))
 
     def forward(self, name, x):
-        return self.adapters[name](x)
+        m = self.adapters[name]
+        m = m.to(x.device)
+        return m(x)
