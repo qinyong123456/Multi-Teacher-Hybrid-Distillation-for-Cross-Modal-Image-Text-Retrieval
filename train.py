@@ -50,7 +50,7 @@ def train(root=None, epochs=1, batch_size=32, lr=1e-4, kd_w=0.5, moe_balance_w=0
     for epoch in range(epochs):
         for imgs, captions in dl:
             imgs = imgs.to(device)
-            img_emb, v_tokens, routings = student(imgs)
+            img_emb, v_tokens, routings, stu_cls = student(imgs)
             tgt_len = v_tokens.shape[1]
             tgt_hw = (int(math.sqrt(tgt_len)), int(math.sqrt(tgt_len)))
             def resize_seq(tokens, src_hw, dst_hw):
@@ -90,12 +90,11 @@ def train(root=None, epochs=1, batch_size=32, lr=1e-4, kd_w=0.5, moe_balance_w=0
             kd_clip = weighted_mse(v_tokens, clip_tokens_s, token_weight)
             kd_eva = weighted_mse(v_tokens, eva_tokens_s)
             kd_conv = weighted_mse(v_tokens, conv_tokens_s)
-            teacher_weight_cls = torch.stack([
-                (img_emb @ nn.functional.normalize(clip_cls, dim=-1).t()).diag(),
-                (img_emb @ nn.functional.normalize(eva_cls, dim=-1).t()).diag(),
-                (img_emb @ nn.functional.normalize(conv_cls, dim=-1).t()).diag(),
-            ], dim=1)
-            tw = torch.softmax(teacher_weight_cls, dim=1)
+            m_clip = (stu_cls.unsqueeze(1) @ clip_tokens_s.transpose(1, 2)).mean(dim=(1, 2))
+            m_eva = (stu_cls.unsqueeze(1) @ eva_tokens_s.transpose(1, 2)).mean(dim=(1, 2))
+            m_conv = (stu_cls.unsqueeze(1) @ conv_tokens_s.transpose(1, 2)).mean(dim=(1, 2))
+            teacher_weight = torch.stack([m_clip, m_eva, m_conv], dim=1)
+            tw = torch.softmax(teacher_weight, dim=1)
             kd_loss = (tw[:,0]*kd_clip + tw[:,1]*kd_eva + tw[:,2]*kd_conv).mean()
             txt_emb = encode_text(tokenizer, text_model, captions)
             loss_align = ctr(img_emb, txt_emb)

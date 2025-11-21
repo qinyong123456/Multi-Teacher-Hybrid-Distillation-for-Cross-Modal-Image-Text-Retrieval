@@ -38,4 +38,4 @@ class StudentViTS(nn.Module):
         cls = x[:, 0]
         img_emb = nn.functional.normalize(self.project(cls), dim=-1)
         tokens = x[:, 1:]
-        return img_emb, tokens, routings
+        return img_emb, tokens, routings, cls
