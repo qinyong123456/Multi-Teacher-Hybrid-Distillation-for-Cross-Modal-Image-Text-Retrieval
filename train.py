@@ -40,7 +40,12 @@ def train(root=None, epochs=1, batch_size=32, lr=1e-4, kd_w=0.5, moe_balance_w=0
     text_model = text_model.to(device)
     opt = torch.optim.AdamW([p for p in student.parameters() if p.requires_grad] + list(adapters.parameters()), lr=lr)
     ctr = ContrastiveLoss()
+    total_steps = len(dl)
     for epoch in range(epochs):
+        step_idx = 0
+        epoch_loss_sum = 0.0
+        epoch_kd_sum = 0.0
+        epoch_align_sum = 0.0
         for imgs, captions in dl:
             imgs = imgs.to(device)
             img_emb, v_tokens, routings, stu_cls = student(imgs)
@@ -106,6 +111,17 @@ def train(root=None, epochs=1, batch_size=32, lr=1e-4, kd_w=0.5, moe_balance_w=0
             opt.zero_grad()
             loss.backward()
             opt.step()
+            step_idx += 1
+            epoch_loss_sum += float(loss.detach().cpu())
+            epoch_kd_sum += float(kd_loss.detach().cpu())
+            epoch_align_sum += float(loss_align.detach().cpu())
+            if hasattr(train, 'log_interval'):
+                log_interval = train.log_interval
+            else:
+                log_interval = 10
+            if step_idx % log_interval == 0:
+                print(f"epoch {epoch+1}/{epochs} step {step_idx}/{total_steps} loss {epoch_loss_sum/step_idx:.4f} kd {epoch_kd_sum/step_idx:.4f} align {epoch_align_sum/step_idx:.4f}")
+        print(f"epoch {epoch+1} done avg_loss {epoch_loss_sum/total_steps:.4f} avg_kd {epoch_kd_sum/total_steps:.4f} avg_align {epoch_align_sum/total_steps:.4f}")
     return student
 
 if __name__ == '__main__':
@@ -120,5 +136,7 @@ if __name__ == '__main__':
     p.add_argument('--kd_w', type=float, default=0.5)
     p.add_argument('--moe_balance_w', type=float, default=0.01)
     p.add_argument('--device', type=str, default='cuda')
+    p.add_argument('--log_interval', type=int, default=10)
     args = p.parse_args()
+    train.log_interval = args.log_interval
     train(args.root, args.epochs, args.batch_size, args.lr, args.kd_w, args.moe_balance_w, args.device, args.images_dir, args.captions_txt)
